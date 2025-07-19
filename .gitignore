@@ -2,3 +2,7 @@
 config.json
 node_modules/
 *.log
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
