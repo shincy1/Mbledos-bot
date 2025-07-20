@@ -184,21 +184,34 @@ async def regisrole(interaction: Interaction, role: discord.Role = None):
         
         # Check if role is @everyone
         if role.id == interaction.guild.id:
-            await interaction.response.send_message("Tidak dapat mendaftarkan role @everyone!", ephemeral=True)
+            embed = discord.Embed(
+                title="❌ Role Tidak Valid",
+                description="Tidak dapat mendaftarkan role @everyone!",
+                color=0xe74c3c
+            )
+            embed.add_field(
+                name="💡 Alasan",
+                value="Role @everyone mencakup semua anggota server dan tidak dapat digunakan untuk sistem tugas.",
+                inline=False
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
         
-        # Check if role is managed by bot/integration
+        # Check if role is managed by bot/integration (optional warning, not blocking)
         if role.managed:
-            await interaction.response.send_message("Tidak dapat mendaftarkan role yang dikelola oleh bot atau integrasi!", ephemeral=True)
-            return
+            embed = discord.Embed(
+                title="⚠️ Peringatan",
+                description=f"Role **{role.name}** dikelola oleh bot atau integrasi.",
+                color=0xf39c12
+            )
+            embed.add_field(
+                name="ℹ️ Info",
+                value="Role ini mungkin berubah secara otomatis. Apakah Anda yakin ingin mendaftarkannya?",
+                inline=False
+            )
+            # Still allow registration, just show warning
         
-        # Check if role is higher than bot's highest role
-        bot_member = interaction.guild.get_member(interaction.client.user.id)
-        if bot_member and role >= bot_member.top_role:
-            await interaction.response.send_message("Tidak dapat mendaftarkan role yang lebih tinggi dari role bot!", ephemeral=True)
-            return
-        
-        # Register or unregister role
+        # Register or show already registered message
         if role.id not in config["registered_roles"]:
             config["registered_roles"].append(role.id)
             
@@ -216,6 +229,11 @@ async def regisrole(interaction: Interaction, role: discord.Role = None):
             embed.add_field(name="🆔 Role ID", value=str(role.id), inline=True)
             embed.add_field(name="👥 Jumlah Anggota", value=str(len(role.members)), inline=True)
             
+            # Show role position info
+            embed.add_field(name="📊 Posisi Role", value=f"#{role.position}", inline=True)
+            embed.add_field(name="🎨 Warna Role", value=str(role.color), inline=True)
+            embed.add_field(name="🔧 Dikelola Bot", value="Ya" if role.managed else "Tidak", inline=True)
+            
             embed.add_field(
                 name="ℹ️ Info",
                 value="Anggota dengan role ini sekarang dapat diberi tugas menggunakan command `/ask`.",
@@ -230,6 +248,10 @@ async def regisrole(interaction: Interaction, role: discord.Role = None):
                 description=f"Role {role.mention} sudah terdaftar sebelumnya.",
                 color=0xf39c12
             )
+            
+            embed.add_field(name="📝 Nama Role", value=role.name, inline=True)
+            embed.add_field(name="👥 Jumlah Anggota", value=str(len(role.members)), inline=True)
+            embed.add_field(name="📊 Posisi Role", value=f"#{role.position}", inline=True)
             
             embed.add_field(
                 name="💡 Tips",

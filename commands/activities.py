@@ -5,6 +5,7 @@ from discord.ext import commands
 import json
 import os
 from datetime import datetime
+from utils.database import load_activities, save_activities, ensure_data_directory
 
 class ActivityView(View):
     def __init__(self, logs, current_page=0, per_page=5):
@@ -57,9 +58,8 @@ class ActivityView(View):
     
     async def refresh_activities(self, interaction: Interaction):
         try:
-            # Reload logs from file
-            with open("data/activities.json", "r") as f:
-                self.logs = json.load(f)
+            # Reload logs menggunakan fungsi dari database.py
+            self.logs = load_activities()
             
             # Recalculate max pages
             self.max_pages = max(1, (len(self.logs) + self.per_page - 1) // self.per_page)
@@ -72,15 +72,26 @@ class ActivityView(View):
             embed = self.create_embed()
             await interaction.response.edit_message(embed=embed, view=self)
             
-        except FileNotFoundError:
-            embed = discord.Embed(
-                title="📜 Riwayat Aktivitas",
-                description="Belum ada aktivitas tercatat.",
-                color=0x95a5a6
-            )
-            await interaction.response.edit_message(embed=embed, view=None)
         except Exception as e:
-            await interaction.response.send_message(f"Error saat refresh: {str(e)}", ephemeral=True)
+            print(f"Error in refresh_activities: {e}")
+            embed = discord.Embed(
+                title="❌ Error",
+                description="Terjadi kesalahan saat refresh. File telah diperbaiki.",
+                color=0xe74c3c
+            )
+            
+            # Reset activities file
+            try:
+                from utils.database import reset_activities_file
+                reset_activities_file()
+                self.logs = []
+                embed.description = "File riwayat aktivitas telah diperbaiki."
+                embed.color = 0x2ecc71
+            except Exception as reset_error:
+                print(f"Error resetting activities file: {reset_error}")
+                embed.description = f"Gagal memperbaiki file: {str(reset_error)}"
+            
+            await interaction.response.edit_message(embed=embed, view=None)
     
     async def clear_logs(self, interaction: Interaction):
         # Create confirmation view
@@ -167,18 +178,26 @@ class ConfirmClearView(View):
     @discord.ui.button(label="✅ Ya, Hapus Semua", style=ButtonStyle.danger)
     async def confirm_clear(self, interaction: Interaction, button: Button):
         try:
-            # Clear the activities file
-            with open("data/activities.json", "w") as f:
-                json.dump([], f)
+            # Clear activities menggunakan fungsi dari database.py
+            result = save_activities([])
             
-            embed = discord.Embed(
-                title="✅ Berhasil",
-                description="Semua riwayat aktivitas telah dihapus.",
-                color=0x2ecc71
-            )
+            if result:
+                embed = discord.Embed(
+                    title="✅ Berhasil",
+                    description="Semua riwayat aktivitas telah dihapus.",
+                    color=0x2ecc71
+                )
+            else:
+                embed = discord.Embed(
+                    title="❌ Error",
+                    description="Gagal menghapus riwayat aktivitas.",
+                    color=0xe74c3c
+                )
+            
             await interaction.response.edit_message(embed=embed, view=None)
             
         except Exception as e:
+            print(f"Error clearing activities: {e}")
             embed = discord.Embed(
                 title="❌ Error",
                 description=f"Gagal menghapus riwayat aktivitas: {str(e)}",
@@ -199,22 +218,8 @@ class ConfirmClearView(View):
 @app_commands.checks.has_role("task manager")
 async def activities(interaction: Interaction):
     try:
-        # Ensure data directory exists
-        os.makedirs("data", exist_ok=True)
-        
-        # Load activities
-        if not os.path.exists("data/activities.json"):
-            # Create empty activities file
-            with open("data/activities.json", "w") as f:
-                json.dump([], f)
-            logs = []
-        else:
-            with open("data/activities.json", "r") as f:
-                content = f.read().strip()
-                if not content:
-                    logs = []
-                else:
-                    logs = json.load(f)
+        # Load activities menggunakan fungsi dari database.py
+        logs = load_activities()
         
         if not logs:
             embed = discord.Embed(
@@ -231,19 +236,36 @@ async def activities(interaction: Interaction):
         embed = view.create_embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         
-    except json.JSONDecodeError:
-        embed = discord.Embed(
-            title="❌ Error",
-            description="File riwayat aktivitas rusak. Silakan hubungi administrator.",
-            color=0xe74c3c
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
     except Exception as e:
-        embed = discord.Embed(
-            title="❌ Error",
-            description=f"Terjadi kesalahan: {str(e)}",
-            color=0xe74c3c
-        )
+        print(f"Unexpected error in activities command: {e}")
+        
+        # Coba reset file activities
+        try:
+            from utils.database import reset_activities_file
+            reset_activities_file()
+            
+            embed = discord.Embed(
+                title="✅ File Diperbaiki",
+                description="File riwayat aktivitas telah diperbaiki. Silakan coba lagi.",
+                color=0x2ecc71
+            )
+            embed.add_field(
+                name="ℹ️ Info",
+                value="File yang rusak telah direset. Aktivitas baru akan mulai tercatat.",
+                inline=False
+            )
+        except:
+            embed = discord.Embed(
+                title="❌ Error",
+                description=f"Terjadi kesalahan: {str(e)}",
+                color=0xe74c3c
+            )
+            embed.add_field(
+                name="💡 Solusi",
+                value="Hubungi administrator untuk memperbaiki file aktivitas.",
+                inline=False
+            )
+        
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):
