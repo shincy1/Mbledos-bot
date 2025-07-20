@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot version - Semantic Versioning (MAJOR.MINOR.PATCH.BUILD)
-BOT_VERSION = "1.3.1.0"
+BOT_VERSION = "1.4.1.0"
 BOT_NAME = "Mbledos Task Manager"
-VERSION_CODENAME = "MySQL Edition"
+VERSION_CODENAME = "Docker Edition"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -180,6 +180,7 @@ async def version_command(interaction: discord.Interaction):
     embed.add_field(
         name="🆕 Version 1.3.1 New Features",
         value=(
+            "• **Docker**: Robust Docker Compose deployment\n"
             "• **MySQL Database**: Robust database backend\n"
             "• **Connection Pooling**: Optimized database performance\n"
             "• **Data Integrity**: ACID compliance and constraints\n"
