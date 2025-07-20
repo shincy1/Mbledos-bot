@@ -2,8 +2,7 @@ import discord
 from discord import app_commands, Interaction, ButtonStyle
 from discord.ui import Button, View
 from discord.ext import commands
-from utils.database import get_user_display_name
-import json
+from utils.database import get_user_display_name, load_registered_roles
 import os
 
 class RoleListView(View):
@@ -56,11 +55,8 @@ class RoleListView(View):
     
     async def refresh_data(self, interaction: Interaction):
         try:
-            # Reload config
-            with open("config.json", "r") as f:
-                config = json.load(f)
-            
-            self.registered_roles = config.get("registered_roles", [])
+            # Reload registered roles from database
+            self.registered_roles = load_registered_roles()
             self.max_pages = max(1, (len(self.registered_roles) + self.per_page - 1) // self.per_page)
             
             # Reset to first page if current page is out of bounds
@@ -200,20 +196,8 @@ class RoleListView(View):
 @app_commands.checks.has_role("task manager")
 async def rolelist(interaction: Interaction):
     try:
-        # Load config
-        if not os.path.exists("config.json"):
-            embed = discord.Embed(
-                title="❌ Config Tidak Ditemukan",
-                description="File konfigurasi tidak ditemukan. Silakan hubungi administrator.",
-                color=0xe74c3c
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-        
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        
-        registered_roles = config.get("registered_roles", [])
+        # Load registered roles from database
+        registered_roles = load_registered_roles()
         
         if not registered_roles:
             embed = discord.Embed(
@@ -253,13 +237,6 @@ async def rolelist(interaction: Interaction):
         embed = view.create_embed()
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
         
-    except json.JSONDecodeError:
-        embed = discord.Embed(
-            title="❌ Error",
-            description="File konfigurasi rusak. Silakan hubungi administrator.",
-            color=0xe74c3c
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
     except Exception as e:
         embed = discord.Embed(
             title="❌ Error",
@@ -270,3 +247,4 @@ async def rolelist(interaction: Interaction):
 
 async def setup(bot):
     bot.tree.add_command(rolelist)
+

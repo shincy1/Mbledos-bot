@@ -1,102 +1,143 @@
+import mysql.connector
+from mysql.connector import pooling, Error
 import json
 import os
 from datetime import datetime
 from typing import Dict, Any, List
+import logging
+from dotenv import load_dotenv
 
-DATA_FILE = 'data/tasks.json'
-ACTIVITIES_FILE = 'data/activities.json'
-IDENTITIES_FILE = 'data/identities.json'
+# Load environment variables
+load_dotenv()
 
-def ensure_data_directory():
-    """Pastikan direktori data ada"""
-    os.makedirs('data', exist_ok=True)
+# Database configuration
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'port': int(os.getenv('DB_PORT', 3306)),
+    'user': os.getenv('DB_USER'),
+    'password': os.getenv('DB_PASSWORD'),
+    'database': os.getenv('DB_NAME', 'mbledos_bot'),
+    'charset': 'utf8mb4',
+    'collation': 'utf8mb4_unicode_ci',
+    'autocommit': True,
+    'pool_size': int(os.getenv('DB_POOL_SIZE', 5)),
+    'pool_reset_session': True
+}
 
-def load_tasks() -> Dict[str, Dict[str, Any]]:
-    """Load tasks dari file JSON"""
-    ensure_data_directory()
-    
-    if not os.path.exists(DATA_FILE):
-        # Buat file kosong dengan struktur JSON yang benar
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        return {}
+# Connection pool
+connection_pool = None
+
+def init_database():
+    """Initialize database connection pool"""
+    global connection_pool
+    try:
+        connection_pool = pooling.MySQLConnectionPool(
+            pool_name="mbledos_pool",
+            pool_size=DB_CONFIG['pool_size'],
+            pool_reset_session=DB_CONFIG['pool_reset_session'],
+            host=DB_CONFIG['host'],
+            port=DB_CONFIG['port'],
+            user=DB_CONFIG['user'],
+            password=DB_CONFIG['password'],
+            database=DB_CONFIG['database'],
+            charset=DB_CONFIG['charset'],
+            collation=DB_CONFIG['collation'],
+            autocommit=DB_CONFIG['autocommit']
+        )
+        print("✅ Database connection pool initialized successfully")
+        return True
+    except Error as e:
+        print(f"❌ Error initializing database: {e}")
+        return False
+
+def get_connection():
+    """Get connection from pool"""
+    global connection_pool
+    if connection_pool is None:
+        if not init_database():
+            raise Exception("Failed to initialize database connection pool")
     
     try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if not content:  # File kosong
-                return {}
+        return connection_pool.get_connection()
+    except Error as e:
+        print(f"Error getting database connection: {e}")
+        raise
+
+def ensure_data_directory():
+    """Compatibility function - no longer needed for MySQL"""
+    pass
+
+def load_tasks() -> Dict[str, Dict[str, Any]]:
+    """Load tasks from MySQL database"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT user_id, task_id, title, description, status, priority, 
+                   deadline, progress, created_at, assigned_by
+            FROM tasks
+            ORDER BY user_id, CAST(task_id AS UNSIGNED)
+        """)
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Convert to original format
+        tasks = {}
+        for row in rows:
+            user_id = row['user_id']
+            task_id = row['task_id']
             
-            data = json.loads(content)
+            if user_id not in tasks:
+                tasks[user_id] = {}
             
-            # Validasi struktur data
-            if not isinstance(data, dict):
-                print("Warning: Invalid data structure in tasks.json, resetting...")
-                return {}
-            
-            # Validasi setiap user data
-            validated_data = {}
-            for user_id, user_tasks in data.items():
-                if isinstance(user_tasks, dict):
-                    validated_tasks = {}
-                    for task_id, task in user_tasks.items():
-                        if isinstance(task, dict) and validate_task_structure(task):
-                            validated_tasks[task_id] = task
-                        else:
-                            print(f"Warning: Invalid task structure for user {user_id}, task {task_id}")
-                    
-                    if validated_tasks:  # Only add if user has valid tasks
-                        validated_data[user_id] = validated_tasks
-            
-            return validated_data
-            
-    except (json.JSONDecodeError, FileNotFoundError) as e:
+            tasks[user_id][task_id] = {
+                'title': row['title'],
+                'description': row['description'],
+                'status': row['status'],
+                'priority': row['priority'],
+                'deadline': float(row['deadline']),
+                'progress': row['progress'],
+                'created_at': float(row['created_at']),
+                'assigned_by': row['assigned_by']
+            }
+        
+        return tasks
+        
+    except Error as e:
         print(f"Error loading tasks: {e}")
-        # Backup corrupted file
-        if os.path.exists(DATA_FILE):
-            backup_name = f"{DATA_FILE}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            try:
-                os.rename(DATA_FILE, backup_name)
-                print(f"Corrupted file backed up as: {backup_name}")
-            except:
-                pass
         return {}
     except Exception as e:
         print(f"Unexpected error loading tasks: {e}")
         return {}
 
 def validate_task_structure(task: Dict[str, Any]) -> bool:
-    """Validasi struktur task"""
+    """Validate task structure"""
     required_fields = ['title', 'description', 'status', 'priority', 'deadline', 'progress', 'created_at']
     
     if not isinstance(task, dict):
         return False
     
-    # Cek field yang wajib ada
     for field in required_fields:
         if field not in task:
             return False
     
-    # Validasi tipe data
     try:
-        # Status harus string dan valid
         if task['status'] not in ['pending', 'done', 'approved']:
             return False
         
-        # Priority harus string dan valid
         if task['priority'] not in ['low', 'medium', 'high']:
             return False
         
-        # Progress harus integer 0-100
         progress = int(task['progress'])
         if progress < 0 or progress > 100:
             return False
         
-        # Deadline dan created_at harus timestamp yang valid
         float(task['deadline'])
         float(task['created_at'])
         
-        # Title dan description harus string
         if not isinstance(task['title'], str) or not isinstance(task['description'], str):
             return False
         
@@ -106,106 +147,84 @@ def validate_task_structure(task: Dict[str, Any]) -> bool:
         return False
 
 def save_tasks(data: Dict[str, Dict[str, Any]]) -> bool:
-    """Simpan tasks ke file JSON"""
-    ensure_data_directory()
-    
+    """Save tasks to MySQL database"""
     try:
-        # Validasi data sebelum menyimpan
-        if not isinstance(data, dict):
-            print("Error: Invalid data type for saving tasks")
-            return False
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        # Buat backup file lama jika ada
-        if os.path.exists(DATA_FILE):
-            backup_name = f"{DATA_FILE}.backup"
-            try:
-                with open(DATA_FILE, 'r', encoding='utf-8') as original:
-                    with open(backup_name, 'w', encoding='utf-8') as backup:
-                        backup.write(original.read())
-            except:
-                pass  # Ignore backup errors
+        # Clear existing tasks
+        cursor.execute("DELETE FROM tasks")
         
-        # Simpan data baru
-        with open(DATA_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
+        # Insert new tasks
+        insert_query = """
+            INSERT INTO tasks (user_id, task_id, title, description, status, priority, 
+                             deadline, progress, created_at, assigned_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
         
+        for user_id, user_tasks in data.items():
+            for task_id, task in user_tasks.items():
+                if validate_task_structure(task):
+                    cursor.execute(insert_query, (
+                        user_id, task_id, task['title'], task['description'],
+                        task['status'], task['priority'], task['deadline'],
+                        task['progress'], task['created_at'], 
+                        task.get('assigned_by')
+                    ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
         return True
         
-    except Exception as e:
+    except Error as e:
         print(f"Error saving tasks: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error saving tasks: {e}")
         return False
 
 def load_activities() -> List[Dict[str, str]]:
-    """Load activities dari file JSON"""
-    ensure_data_directory()
-    
-    if not os.path.exists(ACTIVITIES_FILE):
-        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=4, ensure_ascii=False)
-        return []
-    
+    """Load activities from MySQL database"""
     try:
-        with open(ACTIVITIES_FILE, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if not content:
-                # File kosong, tulis array kosong
-                with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-                    json.dump([], f, indent=4, ensure_ascii=False)
-                return []
-            
-            data = json.loads(content)
-            
-            # Validasi struktur data
-            if not isinstance(data, list):
-                print("Warning: Invalid activities data structure, resetting...")
-                # Reset file dengan array kosong
-                with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-                    json.dump([], f, indent=4, ensure_ascii=False)
-                return []
-            
-            # Validasi setiap activity
-            validated_activities = []
-            for activity in data:
-                if isinstance(activity, dict) and validate_activity_structure(activity):
-                    validated_activities.append(activity)
-                else:
-                    print(f"Warning: Invalid activity structure: {activity}")
-            
-            return validated_activities
-            
-    except json.JSONDecodeError as e:
-        print(f"Error loading activities - JSON decode error: {e}")
-        # Backup file yang rusak
-        backup_name = f"{ACTIVITIES_FILE}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        try:
-            os.rename(ACTIVITIES_FILE, backup_name)
-            print(f"Corrupted activities file backed up as: {backup_name}")
-        except:
-            pass
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
         
-        # Buat file baru
-        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=4, ensure_ascii=False)
+        cursor.execute("""
+            SELECT timestamp, user, action
+            FROM activities
+            ORDER BY id ASC
+        """)
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        activities = []
+        for row in rows:
+            if validate_activity_structure(row):
+                activities.append({
+                    'timestamp': row['timestamp'],
+                    'user': row['user'],
+                    'action': row['action']
+                })
+        
+        return activities
+        
+    except Error as e:
+        print(f"Error loading activities: {e}")
         return []
-        
-    except FileNotFoundError:
-        print(f"Activities file not found, creating new one")
-        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=4, ensure_ascii=False)
-        return []
-        
     except Exception as e:
         print(f"Unexpected error loading activities: {e}")
         return []
 
 def validate_activity_structure(activity: Dict[str, str]) -> bool:
-    """Validasi struktur activity"""
+    """Validate activity structure"""
     required_fields = ['timestamp', 'user', 'action']
     
     if not isinstance(activity, dict):
         return False
     
-    # Cek field yang wajib ada
     for field in required_fields:
         if field not in activity or not isinstance(activity[field], str):
             return False
@@ -213,107 +232,83 @@ def validate_activity_structure(activity: Dict[str, str]) -> bool:
     return True
 
 def save_activities(activities: List[Dict[str, str]]) -> bool:
-    """Simpan activities ke file JSON"""
-    ensure_data_directory()
-    
+    """Save activities to MySQL database"""
     try:
-        # Validasi data
-        if not isinstance(activities, list):
-            print("Error: Invalid data type for saving activities")
-            return False
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        # Buat backup file lama jika ada
-        if os.path.exists(ACTIVITIES_FILE):
-            backup_name = f"{ACTIVITIES_FILE}.backup"
-            try:
-                with open(ACTIVITIES_FILE, 'r', encoding='utf-8') as original:
-                    with open(backup_name, 'w', encoding='utf-8') as backup:
-                        backup.write(original.read())
-            except:
-                pass
+        # Clear existing activities
+        cursor.execute("DELETE FROM activities")
         
-        # Simpan data baru
-        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(activities, f, indent=4, ensure_ascii=False)
+        # Insert new activities
+        insert_query = """
+            INSERT INTO activities (timestamp, user, action)
+            VALUES (%s, %s, %s)
+        """
         
-        print(f"Successfully saved {len(activities)} activities to file")
+        for activity in activities:
+            if validate_activity_structure(activity):
+                cursor.execute(insert_query, (
+                    activity['timestamp'],
+                    activity['user'],
+                    activity['action']
+                ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"Successfully saved {len(activities)} activities to database")
         return True
         
-    except Exception as e:
+    except Error as e:
         print(f"Error saving activities: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error saving activities: {e}")
         return False
 
 def load_identities() -> Dict[str, Dict[str, str]]:
-    """Load identities dari file JSON"""
-    ensure_data_directory()
-    
-    if not os.path.exists(IDENTITIES_FILE):
-        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        return {}
-    
+    """Load identities from MySQL database"""
     try:
-        with open(IDENTITIES_FILE, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if not content:
-                # File kosong, tulis object kosong
-                with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-                    json.dump({}, f, indent=4, ensure_ascii=False)
-                return {}
-            
-            data = json.loads(content)
-            
-            # Validasi struktur data
-            if not isinstance(data, dict):
-                print("Warning: Invalid identities data structure, resetting...")
-                # Reset file dengan object kosong
-                with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-                    json.dump({}, f, indent=4, ensure_ascii=False)
-                return {}
-            
-            # Validasi setiap identity
-            validated_identities = {}
-            for user_id, identity in data.items():
-                if isinstance(identity, dict) and validate_identity_structure(identity):
-                    validated_identities[user_id] = identity
-                else:
-                    print(f"Warning: Invalid identity structure for user {user_id}")
-            
-            return validated_identities
-            
-    except json.JSONDecodeError as e:
-        print(f"Error loading identities - JSON decode error: {e}")
-        # Backup file yang rusak
-        backup_name = f"{IDENTITIES_FILE}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        try:
-            os.rename(IDENTITIES_FILE, backup_name)
-            print(f"Corrupted identities file backed up as: {backup_name}")
-        except:
-            pass
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
         
-        # Buat file baru
-        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
+        cursor.execute("""
+            SELECT user_id, full_name, nickname, discord_name, updated_at, updated_by
+            FROM identities
+        """)
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        identities = {}
+        for row in rows:
+            identities[row['user_id']] = {
+                'full_name': row['full_name'],
+                'nickname': row['nickname'],
+                'discord_name': row['discord_name'],
+                'updated_at': row['updated_at'],
+                'updated_by': row['updated_by']
+            }
+        
+        return identities
+        
+    except Error as e:
+        print(f"Error loading identities: {e}")
         return {}
-        
-    except FileNotFoundError:
-        print(f"Identities file not found, creating new one")
-        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        return {}
-        
     except Exception as e:
         print(f"Unexpected error loading identities: {e}")
         return {}
 
 def validate_identity_structure(identity: Dict[str, str]) -> bool:
-    """Validasi struktur identity"""
+    """Validate identity structure"""
     required_fields = ['full_name', 'nickname', 'discord_name']
     
     if not isinstance(identity, dict):
         return False
     
-    # Cek field yang wajib ada
     for field in required_fields:
         if field not in identity or not isinstance(identity[field], str):
             return False
@@ -321,269 +316,553 @@ def validate_identity_structure(identity: Dict[str, str]) -> bool:
     return True
 
 def save_identities(identities: Dict[str, Dict[str, str]]) -> bool:
-    """Simpan identities ke file JSON"""
-    ensure_data_directory()
-    
+    """Save identities to MySQL database"""
     try:
-        # Validasi data
-        if not isinstance(identities, dict):
-            print("Error: Invalid data type for saving identities")
-            return False
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        # Buat backup file lama jika ada
-        if os.path.exists(IDENTITIES_FILE):
-            backup_name = f"{IDENTITIES_FILE}.backup"
-            try:
-                with open(IDENTITIES_FILE, 'r', encoding='utf-8') as original:
-                    with open(backup_name, 'w', encoding='utf-8') as backup:
-                        backup.write(original.read())
-            except:
-                pass
+        # Use INSERT ... ON DUPLICATE KEY UPDATE for upsert behavior
+        upsert_query = """
+            INSERT INTO identities (user_id, full_name, nickname, discord_name, updated_at, updated_by)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                full_name = VALUES(full_name),
+                nickname = VALUES(nickname),
+                discord_name = VALUES(discord_name),
+                updated_at = VALUES(updated_at),
+                updated_by = VALUES(updated_by)
+        """
         
-        # Simpan data baru
-        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(identities, f, indent=4, ensure_ascii=False)
+        for user_id, identity in identities.items():
+            if validate_identity_structure(identity):
+                cursor.execute(upsert_query, (
+                    user_id,
+                    identity['full_name'],
+                    identity['nickname'],
+                    identity['discord_name'],
+                    identity.get('updated_at'),
+                    identity.get('updated_by')
+                ))
         
-        print(f"Successfully saved {len(identities)} identities to file")
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print(f"Successfully saved {len(identities)} identities to database")
         return True
         
-    except Exception as e:
+    except Error as e:
         print(f"Error saving identities: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error saving identities: {e}")
         return False
 
 def get_user_display_name(user_id: str, fallback_name: str = None) -> str:
-    """Dapatkan nama tampilan user (nickname jika ada, fallback jika tidak)"""
+    """Get user display name (nickname if available, fallback if not)"""
     try:
-        identities = load_identities()
-        identity = identities.get(str(user_id))
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if identity and identity.get('nickname'):
-            return identity['nickname']
+        cursor.execute("SELECT nickname FROM identities WHERE user_id = %s", (str(user_id),))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if result and result[0]:
+            return result[0]
         
         return fallback_name or f"User {user_id}"
         
-    except Exception as e:
+    except Error as e:
         print(f"Error getting user display name: {e}")
+        return fallback_name or f"User {user_id}"
+    except Exception as e:
+        print(f"Unexpected error getting user display name: {e}")
         return fallback_name or f"User {user_id}"
 
 def get_user_full_name(user_id: str, fallback_name: str = None) -> str:
-    """Dapatkan nama lengkap user"""
+    """Get user full name"""
     try:
-        identities = load_identities()
-        identity = identities.get(str(user_id))
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if identity and identity.get('full_name'):
-            return identity['full_name']
+        cursor.execute("SELECT full_name FROM identities WHERE user_id = %s", (str(user_id),))
+        result = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if result and result[0]:
+            return result[0]
         
         return fallback_name or f"User {user_id}"
         
-    except Exception as e:
+    except Error as e:
         print(f"Error getting user full name: {e}")
+        return fallback_name or f"User {user_id}"
+    except Exception as e:
+        print(f"Unexpected error getting user full name: {e}")
         return fallback_name or f"User {user_id}"
 
 def get_user_identity(user_id: str) -> Dict[str, str]:
-    """Dapatkan identitas lengkap user"""
+    """Get complete user identity"""
     try:
-        identities = load_identities()
-        return identities.get(str(user_id), {})
-    except Exception as e:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT full_name, nickname, discord_name, updated_at, updated_by
+            FROM identities WHERE user_id = %s
+        """, (str(user_id),))
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        return result if result else {}
+        
+    except Error as e:
         print(f"Error getting user identity: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error getting user identity: {e}")
         return {}
 
 def log_activity(user, action: str) -> bool:
-    """Log aktivitas user"""
+    """Log user activity"""
     try:
-        activities = load_activities()
-        
         # Get display name (nickname if available)
         if hasattr(user, 'id'):
             display_name = get_user_display_name(str(user.id), user.display_name if hasattr(user, 'display_name') else str(user))
         else:
             display_name = str(user)
         
-        new_activity = {
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user": display_name,
-            "action": action
-        }
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        activities.append(new_activity)
+        # Insert new activity
+        cursor.execute("""
+            INSERT INTO activities (timestamp, user, action)
+            VALUES (%s, %s, %s)
+        """, (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            display_name,
+            action
+        ))
         
-        # Batasi jumlah log (keep last 1000 entries)
-        if len(activities) > 1000:
-            activities = activities[-1000:]
+        conn.commit()
         
-        result = save_activities(activities)
-        if result:
-            print(f"Activity logged: {new_activity['user']} - {new_activity['action']}")
-        else:
-            print(f"Failed to log activity: {new_activity['user']} - {new_activity['action']}")
+        # Keep only last 1000 activities
+        cursor.execute("""
+            DELETE FROM activities 
+            WHERE id NOT IN (
+                SELECT id FROM (
+                    SELECT id FROM activities 
+                    ORDER BY id DESC 
+                    LIMIT 1000
+                ) AS keep_activities
+            )
+        """)
         
-        return result
+        conn.commit()
+        cursor.close()
+        conn.close()
         
-    except Exception as e:
+        print(f"Activity logged: {display_name} - {action}")
+        return True
+        
+    except Error as e:
         print(f"Error logging activity: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error logging activity: {e}")
         return False
 
 def get_user_tasks(user_id: str) -> Dict[str, Any]:
-    """Dapatkan semua tasks untuk user tertentu"""
-    tasks = load_tasks()
-    return tasks.get(str(user_id), {})
+    """Get all tasks for specific user"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT task_id, title, description, status, priority, 
+                   deadline, progress, created_at, assigned_by
+            FROM tasks
+            WHERE user_id = %s
+            ORDER BY CAST(task_id AS UNSIGNED)
+        """, (str(user_id),))
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        tasks = {}
+        for row in rows:
+            tasks[row['task_id']] = {
+                'title': row['title'],
+                'description': row['description'],
+                'status': row['status'],
+                'priority': row['priority'],
+                'deadline': float(row['deadline']),
+                'progress': row['progress'],
+                'created_at': float(row['created_at']),
+                'assigned_by': row['assigned_by']
+            }
+        
+        return tasks
+        
+    except Error as e:
+        print(f"Error getting user tasks: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error getting user tasks: {e}")
+        return {}
 
 def get_task(user_id: str, task_id: str) -> Dict[str, Any]:
-    """Dapatkan task tertentu"""
-    user_tasks = get_user_tasks(user_id)
-    return user_tasks.get(task_id, {})
+    """Get specific task"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT title, description, status, priority, 
+                   deadline, progress, created_at, assigned_by
+            FROM tasks
+            WHERE user_id = %s AND task_id = %s
+        """, (str(user_id), task_id))
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if result:
+            return {
+                'title': result['title'],
+                'description': result['description'],
+                'status': result['status'],
+                'priority': result['priority'],
+                'deadline': float(result['deadline']),
+                'progress': result['progress'],
+                'created_at': float(result['created_at']),
+                'assigned_by': result['assigned_by']
+            }
+        
+        return {}
+        
+    except Error as e:
+        print(f"Error getting task: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error getting task: {e}")
+        return {}
 
 def update_task(user_id: str, task_id: str, updates: Dict[str, Any]) -> bool:
-    """Update task tertentu"""
+    """Update specific task"""
     try:
-        tasks = load_tasks()
-        user_id = str(user_id)
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if user_id not in tasks or task_id not in tasks[user_id]:
+        # Build dynamic update query
+        update_fields = []
+        values = []
+        
+        allowed_fields = ['title', 'description', 'status', 'priority', 'progress', 'deadline']
+        for key, value in updates.items():
+            if key in allowed_fields:
+                update_fields.append(f"{key} = %s")
+                values.append(value)
+        
+        if not update_fields:
             return False
         
-        # Update fields
-        for key, value in updates.items():
-            if key in ['title', 'description', 'status', 'priority', 'progress', 'deadline']:
-                tasks[user_id][task_id][key] = value
+        values.extend([str(user_id), task_id])
         
-        return save_tasks(tasks)
+        query = f"""
+            UPDATE tasks 
+            SET {', '.join(update_fields)}
+            WHERE user_id = %s AND task_id = %s
+        """
         
-    except Exception as e:
+        cursor.execute(query, values)
+        success = cursor.rowcount > 0
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return success
+        
+    except Error as e:
         print(f"Error updating task: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error updating task: {e}")
         return False
 
 def delete_task(user_id: str, task_id: str) -> bool:
-    """Hapus task tertentu"""
+    """Delete specific task"""
     try:
-        tasks = load_tasks()
-        user_id = str(user_id)
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        if user_id not in tasks or task_id not in tasks[user_id]:
-            return False
+        cursor.execute("""
+            DELETE FROM tasks 
+            WHERE user_id = %s AND task_id = %s
+        """, (str(user_id), task_id))
         
-        del tasks[user_id][task_id]
+        success = cursor.rowcount > 0
+        conn.commit()
+        cursor.close()
+        conn.close()
         
-        # Hapus user entry jika tidak ada task lagi
-        if not tasks[user_id]:
-            del tasks[user_id]
+        return success
         
-        return save_tasks(tasks)
-        
-    except Exception as e:
+    except Error as e:
         print(f"Error deleting task: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error deleting task: {e}")
         return False
 
 def get_tasks_by_status(status: str) -> Dict[str, Dict[str, Any]]:
-    """Dapatkan semua tasks dengan status tertentu"""
-    all_tasks = load_tasks()
-    filtered_tasks = {}
-    
-    for user_id, user_tasks in all_tasks.items():
-        user_filtered = {}
-        for task_id, task in user_tasks.items():
-            if task.get('status') == status:
-                user_filtered[task_id] = task
+    """Get all tasks with specific status"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
         
-        if user_filtered:
-            filtered_tasks[user_id] = user_filtered
-    
-    return filtered_tasks
+        cursor.execute("""
+            SELECT user_id, task_id, title, description, status, priority, 
+                   deadline, progress, created_at, assigned_by
+            FROM tasks
+            WHERE status = %s
+            ORDER BY user_id, CAST(task_id AS UNSIGNED)
+        """, (status,))
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        tasks = {}
+        for row in rows:
+            user_id = row['user_id']
+            task_id = row['task_id']
+            
+            if user_id not in tasks:
+                tasks[user_id] = {}
+            
+            tasks[user_id][task_id] = {
+                'title': row['title'],
+                'description': row['description'],
+                'status': row['status'],
+                'priority': row['priority'],
+                'deadline': float(row['deadline']),
+                'progress': row['progress'],
+                'created_at': float(row['created_at']),
+                'assigned_by': row['assigned_by']
+            }
+        
+        return tasks
+        
+    except Error as e:
+        print(f"Error getting tasks by status: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error getting tasks by status: {e}")
+        return {}
 
 def get_overdue_tasks() -> Dict[str, Dict[str, Any]]:
-    """Dapatkan semua tasks yang sudah melewati deadline"""
-    all_tasks = load_tasks()
-    overdue_tasks = {}
-    current_time = datetime.now().timestamp()
-    
-    for user_id, user_tasks in all_tasks.items():
-        user_overdue = {}
-        for task_id, task in user_tasks.items():
-            if (task.get('status') not in ['done', 'approved'] and 
-                task.get('deadline', 0) < current_time):
-                user_overdue[task_id] = task
+    """Get all overdue tasks"""
+    try:
+        current_time = datetime.now().timestamp()
         
-        if user_overdue:
-            overdue_tasks[user_id] = user_overdue
-    
-    return overdue_tasks
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        
+        cursor.execute("""
+            SELECT user_id, task_id, title, description, status, priority, 
+                   deadline, progress, created_at, assigned_by
+            FROM tasks
+            WHERE status NOT IN ('done', 'approved') AND deadline < %s
+            ORDER BY user_id, CAST(task_id AS UNSIGNED)
+        """, (current_time,))
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        tasks = {}
+        for row in rows:
+            user_id = row['user_id']
+            task_id = row['task_id']
+            
+            if user_id not in tasks:
+                tasks[user_id] = {}
+            
+            tasks[user_id][task_id] = {
+                'title': row['title'],
+                'description': row['description'],
+                'status': row['status'],
+                'priority': row['priority'],
+                'deadline': float(row['deadline']),
+                'progress': row['progress'],
+                'created_at': float(row['created_at']),
+                'assigned_by': row['assigned_by']
+            }
+        
+        return tasks
+        
+    except Error as e:
+        print(f"Error getting overdue tasks: {e}")
+        return {}
+    except Exception as e:
+        print(f"Unexpected error getting overdue tasks: {e}")
+        return {}
 
 def cleanup_invalid_data():
-    """Bersihkan data yang tidak valid"""
+    """Clean up invalid data - MySQL constraints handle most validation"""
     try:
         print("Starting data cleanup...")
         
-        # Cleanup tasks
-        tasks = load_tasks()
-        cleaned_tasks = {}
+        conn = get_connection()
+        cursor = conn.cursor()
         
-        for user_id, user_tasks in tasks.items():
-            cleaned_user_tasks = {}
-            for task_id, task in user_tasks.items():
-                if validate_task_structure(task):
-                    cleaned_user_tasks[task_id] = task
-                else:
-                    print(f"Removed invalid task: {user_id}/{task_id}")
-            
-            if cleaned_user_tasks:
-                cleaned_tasks[user_id] = cleaned_user_tasks
+        # Clean up tasks with invalid progress values
+        cursor.execute("""
+            UPDATE tasks 
+            SET progress = CASE 
+                WHEN progress < 0 THEN 0
+                WHEN progress > 100 THEN 100
+                ELSE progress
+            END
+            WHERE progress < 0 OR progress > 100
+        """)
         
-        save_tasks(cleaned_tasks)
+        # Clean up tasks with invalid status
+        cursor.execute("""
+            UPDATE tasks 
+            SET status = 'pending'
+            WHERE status NOT IN ('pending', 'done', 'approved')
+        """)
         
-        # Cleanup activities
-        activities = load_activities()
-        cleaned_activities = []
+        # Clean up tasks with invalid priority
+        cursor.execute("""
+            UPDATE tasks 
+            SET priority = 'medium'
+            WHERE priority NOT IN ('low', 'medium', 'high')
+        """)
         
-        for activity in activities:
-            if validate_activity_structure(activity):
-                cleaned_activities.append(activity)
-            else:
-                print(f"Removed invalid activity: {activity}")
-        
-        save_activities(cleaned_activities)
-        
-        # Cleanup identities
-        identities = load_identities()
-        cleaned_identities = {}
-        
-        for user_id, identity in identities.items():
-            if validate_identity_structure(identity):
-                cleaned_identities[user_id] = identity
-            else:
-                print(f"Removed invalid identity: {user_id}")
-        
-        save_identities(cleaned_identities)
+        conn.commit()
+        cursor.close()
+        conn.close()
         
         print("Data cleanup completed.")
         return True
         
-    except Exception as e:
+    except Error as e:
         print(f"Error during cleanup: {e}")
         return False
-
-# Fungsi untuk reset file activities jika rusak
-def reset_activities_file():
-    """Reset file activities.json jika rusak"""
-    try:
-        ensure_data_directory()
-        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump([], f, indent=4, ensure_ascii=False)
-        print("Activities file has been reset")
-        return True
     except Exception as e:
-        print(f"Error resetting activities file: {e}")
+        print(f"Unexpected error during cleanup: {e}")
+        return False
+
+def reset_activities_file():
+    """Reset activities table"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM activities")
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print("Activities table has been reset")
+        return True
+        
+    except Error as e:
+        print(f"Error resetting activities: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error resetting activities: {e}")
         return False
 
 def reset_identities_file():
-    """Reset file identities.json jika rusak"""
+    """Reset identities table"""
     try:
-        ensure_data_directory()
-        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        print("Identities file has been reset")
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("DELETE FROM identities")
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        print("Identities table has been reset")
         return True
-    except Exception as e:
-        print(f"Error resetting identities file: {e}")
+        
+    except Error as e:
+        print(f"Error resetting identities: {e}")
         return False
+    except Exception as e:
+        print(f"Unexpected error resetting identities: {e}")
+        return False
+
+# Config functions for registered roles
+def load_registered_roles() -> List[int]:
+    """Load registered roles from config table"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT config_value 
+            FROM config 
+            WHERE config_key = 'registered_roles'
+        """)
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if result and result[0]:
+            return json.loads(result[0])
+        
+        return []
+        
+    except Error as e:
+        print(f"Error loading registered roles: {e}")
+        return []
+    except Exception as e:
+        print(f"Unexpected error loading registered roles: {e}")
+        return []
+
+def save_registered_roles(roles: List[int]) -> bool:
+    """Save registered roles to config table"""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO config (config_key, config_value)
+            VALUES ('registered_roles', %s)
+            ON DUPLICATE KEY UPDATE config_value = VALUES(config_value)
+        """, (json.dumps(roles),))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        return True
+        
+    except Error as e:
+        print(f"Error saving registered roles: {e}")
+        return False
+    except Exception as e:
+        print(f"Unexpected error saving registered roles: {e}")
+        return False
+
+# Initialize database on import
+if not init_database():
+    print("⚠️ Warning: Database initialization failed. Some features may not work.")

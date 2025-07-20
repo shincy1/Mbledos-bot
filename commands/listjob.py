@@ -2,7 +2,7 @@ import discord
 from discord import app_commands, Interaction, ButtonStyle
 from discord.ui import Button, View, Select
 from discord.ext import commands
-from utils.database import load_tasks, save_tasks, log_activity, get_user_display_name
+from utils.database import load_tasks, save_tasks, log_activity, get_user_display_name, load_registered_roles
 from datetime import datetime
 import json
 import os
@@ -425,11 +425,8 @@ class TaskManagerView(View):
 def get_all_registered_users_with_tasks(guild):
     """Get all registered users with their task counts"""
     try:
-        # Load config to get registered roles
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        
-        registered_roles = config.get("registered_roles", [])
+        # Load registered roles from database
+        registered_roles = load_registered_roles()
         if not registered_roles:
             return []
         
@@ -488,7 +485,6 @@ def get_all_registered_users_with_tasks(guild):
     except Exception as e:
         print(f"Error getting registered users with tasks: {e}")
         return []
-
 @app_commands.command(name="listjob", description="Lihat tugas pengguna (spesifik atau semua)")
 @app_commands.checks.has_role("task manager")
 async def listjob(interaction: Interaction, target_user: discord.Member = None):

@@ -1,8 +1,8 @@
-import json
 import discord
 from discord import app_commands, Interaction, ButtonStyle
 from discord.ui import Button, View
 from discord.ext import commands
+from utils.database import load_registered_roles, save_registered_roles
 import os
 
 class RoleManagementView(View):
@@ -118,23 +118,27 @@ class RemoveRoleView(View):
     def create_remove_callback(self, role_id, role_name):
         async def remove_role_callback(interaction: Interaction):
             try:
-                # Load config
-                with open("config.json", "r") as f:
-                    config = json.load(f)
+                # Load registered roles from database
+                registered_roles = load_registered_roles()
                 
                 # Remove role from registered_roles
-                if role_id in config["registered_roles"]:
-                    config["registered_roles"].remove(role_id)
+                if role_id in registered_roles:
+                    registered_roles.remove(role_id)
                     
-                    # Save config
-                    with open("config.json", "w") as f:
-                        json.dump(config, f, indent=4)
+                    # Save updated roles to database
+                    if save_registered_roles(registered_roles):
+                        embed = discord.Embed(
+                            title="✅ Berhasil",
+                            description=f"Role **{role_name}** berhasil dihapus dari daftar.",
+                            color=0x2ecc71
+                        )
+                    else:
+                        embed = discord.Embed(
+                            title="❌ Error",
+                            description=f"Gagal menyimpan perubahan untuk role **{role_name}**.",
+                            color=0xe74c3c
+                        )
                     
-                    embed = discord.Embed(
-                        title="✅ Berhasil",
-                        description=f"Role **{role_name}** berhasil dihapus dari daftar.",
-                        color=0x2ecc71
-                    )
                     await interaction.response.edit_message(embed=embed, view=None)
                 else:
                     embed = discord.Embed(
@@ -158,26 +162,12 @@ class RemoveRoleView(View):
 @app_commands.checks.has_role("task manager")
 async def regisrole(interaction: Interaction, role: discord.Role = None):
     try:
-        # Ensure config file exists
-        if not os.path.exists("config.json"):
-            default_config = {
-                "token": "",
-                "registered_roles": []
-            }
-            with open("config.json", "w") as f:
-                json.dump(default_config, f, indent=4)
-        
-        # Load config
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        
-        # Ensure registered_roles key exists
-        if "registered_roles" not in config:
-            config["registered_roles"] = []
+        # Load registered roles from database
+        registered_roles = load_registered_roles()
         
         # If no role specified, show management interface
         if role is None:
-            view = RoleManagementView(config["registered_roles"], interaction.guild)
+            view = RoleManagementView(registered_roles, interaction.guild)
             embed = view.create_roles_embed()
             await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
             return
@@ -212,36 +202,39 @@ async def regisrole(interaction: Interaction, role: discord.Role = None):
             # Still allow registration, just show warning
         
         # Register or show already registered message
-        if role.id not in config["registered_roles"]:
-            config["registered_roles"].append(role.id)
+        if role.id not in registered_roles:
+            registered_roles.append(role.id)
             
-            # Save config
-            with open("config.json", "w") as f:
-                json.dump(config, f, indent=4)
-            
-            embed = discord.Embed(
-                title="✅ Role Berhasil Didaftarkan",
-                description=f"Role {role.mention} berhasil didaftarkan!",
-                color=0x2ecc71
-            )
-            
-            embed.add_field(name="📝 Nama Role", value=role.name, inline=True)
-            embed.add_field(name="🆔 Role ID", value=str(role.id), inline=True)
-            embed.add_field(name="👥 Jumlah Anggota", value=str(len(role.members)), inline=True)
-            
-            # Show role position info
-            embed.add_field(name="📊 Posisi Role", value=f"#{role.position}", inline=True)
-            embed.add_field(name="🎨 Warna Role", value=str(role.color), inline=True)
-            embed.add_field(name="🔧 Dikelola Bot", value="Ya" if role.managed else "Tidak", inline=True)
-            
-            embed.add_field(
-                name="ℹ️ Info",
-                value="Anggota dengan role ini sekarang dapat diberi tugas menggunakan command `/ask`.",
-                inline=False
-            )
-            
-            embed.set_footer(text="Gunakan /regisrole tanpa parameter untuk melihat semua role terdaftar")
-            
+            # Save to database
+            if save_registered_roles(registered_roles):
+                embed = discord.Embed(
+                    title="✅ Role Berhasil Didaftarkan",
+                    description=f"Role {role.mention} berhasil didaftarkan!",
+                    color=0x2ecc71
+                )
+                
+                embed.add_field(name="📝 Nama Role", value=role.name, inline=True)
+                embed.add_field(name="🆔 Role ID", value=str(role.id), inline=True)
+                embed.add_field(name="👥 Jumlah Anggota", value=str(len(role.members)), inline=True)
+                
+                # Show role position info
+                embed.add_field(name="📊 Posisi Role", value=f"#{role.position}", inline=True)
+                embed.add_field(name="🎨 Warna Role", value=str(role.color), inline=True)
+                embed.add_field(name="🔧 Dikelola Bot", value="Ya" if role.managed else "Tidak", inline=True)
+                
+                embed.add_field(
+                    name="ℹ️ Info",
+                    value="Anggota dengan role ini sekarang dapat diberi tugas menggunakan command `/ask`.",
+                    inline=False
+                )
+                
+                embed.set_footer(text="Gunakan /regisrole tanpa parameter untuk melihat semua role terdaftar")
+            else:
+                embed = discord.Embed(
+                    title="❌ Error",
+                    description="Gagal menyimpan role ke database.",
+                    color=0xe74c3c
+                )
         else:
             embed = discord.Embed(
                 title="⚠️ Role Sudah Terdaftar",
@@ -261,13 +254,6 @@ async def regisrole(interaction: Interaction, role: discord.Role = None):
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
         
-    except json.JSONDecodeError:
-        embed = discord.Embed(
-            title="❌ Error",
-            description="File konfigurasi rusak. Silakan hubungi administrator.",
-            color=0xe74c3c
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
     except Exception as e:
         embed = discord.Embed(
             title="❌ Error",
