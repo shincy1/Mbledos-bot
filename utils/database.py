@@ -5,6 +5,7 @@ from typing import Dict, Any, List
 
 DATA_FILE = 'data/tasks.json'
 ACTIVITIES_FILE = 'data/activities.json'
+IDENTITIES_FILE = 'data/identities.json'
 
 def ensure_data_directory():
     """Pastikan direktori data ada"""
@@ -147,6 +148,9 @@ def load_activities() -> List[Dict[str, str]]:
         with open(ACTIVITIES_FILE, 'r', encoding='utf-8') as f:
             content = f.read().strip()
             if not content:
+                # File kosong, tulis array kosong
+                with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
+                    json.dump([], f, indent=4, ensure_ascii=False)
                 return []
             
             data = json.loads(content)
@@ -154,6 +158,9 @@ def load_activities() -> List[Dict[str, str]]:
             # Validasi struktur data
             if not isinstance(data, list):
                 print("Warning: Invalid activities data structure, resetting...")
+                # Reset file dengan array kosong
+                with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
+                    json.dump([], f, indent=4, ensure_ascii=False)
                 return []
             
             # Validasi setiap activity
@@ -161,12 +168,32 @@ def load_activities() -> List[Dict[str, str]]:
             for activity in data:
                 if isinstance(activity, dict) and validate_activity_structure(activity):
                     validated_activities.append(activity)
+                else:
+                    print(f"Warning: Invalid activity structure: {activity}")
             
             return validated_activities
             
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        print(f"Error loading activities: {e}")
+    except json.JSONDecodeError as e:
+        print(f"Error loading activities - JSON decode error: {e}")
+        # Backup file yang rusak
+        backup_name = f"{ACTIVITIES_FILE}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            os.rename(ACTIVITIES_FILE, backup_name)
+            print(f"Corrupted activities file backed up as: {backup_name}")
+        except:
+            pass
+        
+        # Buat file baru
+        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=4, ensure_ascii=False)
         return []
+        
+    except FileNotFoundError:
+        print(f"Activities file not found, creating new one")
+        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=4, ensure_ascii=False)
+        return []
+        
     except Exception as e:
         print(f"Unexpected error loading activities: {e}")
         return []
@@ -209,20 +236,174 @@ def save_activities(activities: List[Dict[str, str]]) -> bool:
         with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
             json.dump(activities, f, indent=4, ensure_ascii=False)
         
+        print(f"Successfully saved {len(activities)} activities to file")
         return True
         
     except Exception as e:
         print(f"Error saving activities: {e}")
         return False
 
+def load_identities() -> Dict[str, Dict[str, str]]:
+    """Load identities dari file JSON"""
+    ensure_data_directory()
+    
+    if not os.path.exists(IDENTITIES_FILE):
+        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        return {}
+    
+    try:
+        with open(IDENTITIES_FILE, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+            if not content:
+                # File kosong, tulis object kosong
+                with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+                    json.dump({}, f, indent=4, ensure_ascii=False)
+                return {}
+            
+            data = json.loads(content)
+            
+            # Validasi struktur data
+            if not isinstance(data, dict):
+                print("Warning: Invalid identities data structure, resetting...")
+                # Reset file dengan object kosong
+                with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+                    json.dump({}, f, indent=4, ensure_ascii=False)
+                return {}
+            
+            # Validasi setiap identity
+            validated_identities = {}
+            for user_id, identity in data.items():
+                if isinstance(identity, dict) and validate_identity_structure(identity):
+                    validated_identities[user_id] = identity
+                else:
+                    print(f"Warning: Invalid identity structure for user {user_id}")
+            
+            return validated_identities
+            
+    except json.JSONDecodeError as e:
+        print(f"Error loading identities - JSON decode error: {e}")
+        # Backup file yang rusak
+        backup_name = f"{IDENTITIES_FILE}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        try:
+            os.rename(IDENTITIES_FILE, backup_name)
+            print(f"Corrupted identities file backed up as: {backup_name}")
+        except:
+            pass
+        
+        # Buat file baru
+        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        return {}
+        
+    except FileNotFoundError:
+        print(f"Identities file not found, creating new one")
+        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        return {}
+        
+    except Exception as e:
+        print(f"Unexpected error loading identities: {e}")
+        return {}
+
+def validate_identity_structure(identity: Dict[str, str]) -> bool:
+    """Validasi struktur identity"""
+    required_fields = ['full_name', 'nickname', 'discord_name']
+    
+    if not isinstance(identity, dict):
+        return False
+    
+    # Cek field yang wajib ada
+    for field in required_fields:
+        if field not in identity or not isinstance(identity[field], str):
+            return False
+    
+    return True
+
+def save_identities(identities: Dict[str, Dict[str, str]]) -> bool:
+    """Simpan identities ke file JSON"""
+    ensure_data_directory()
+    
+    try:
+        # Validasi data
+        if not isinstance(identities, dict):
+            print("Error: Invalid data type for saving identities")
+            return False
+        
+        # Buat backup file lama jika ada
+        if os.path.exists(IDENTITIES_FILE):
+            backup_name = f"{IDENTITIES_FILE}.backup"
+            try:
+                with open(IDENTITIES_FILE, 'r', encoding='utf-8') as original:
+                    with open(backup_name, 'w', encoding='utf-8') as backup:
+                        backup.write(original.read())
+            except:
+                pass
+        
+        # Simpan data baru
+        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(identities, f, indent=4, ensure_ascii=False)
+        
+        print(f"Successfully saved {len(identities)} identities to file")
+        return True
+        
+    except Exception as e:
+        print(f"Error saving identities: {e}")
+        return False
+
+def get_user_display_name(user_id: str, fallback_name: str = None) -> str:
+    """Dapatkan nama tampilan user (nickname jika ada, fallback jika tidak)"""
+    try:
+        identities = load_identities()
+        identity = identities.get(str(user_id))
+        
+        if identity and identity.get('nickname'):
+            return identity['nickname']
+        
+        return fallback_name or f"User {user_id}"
+        
+    except Exception as e:
+        print(f"Error getting user display name: {e}")
+        return fallback_name or f"User {user_id}"
+
+def get_user_full_name(user_id: str, fallback_name: str = None) -> str:
+    """Dapatkan nama lengkap user"""
+    try:
+        identities = load_identities()
+        identity = identities.get(str(user_id))
+        
+        if identity and identity.get('full_name'):
+            return identity['full_name']
+        
+        return fallback_name or f"User {user_id}"
+        
+    except Exception as e:
+        print(f"Error getting user full name: {e}")
+        return fallback_name or f"User {user_id}"
+
+def get_user_identity(user_id: str) -> Dict[str, str]:
+    """Dapatkan identitas lengkap user"""
+    try:
+        identities = load_identities()
+        return identities.get(str(user_id), {})
+    except Exception as e:
+        print(f"Error getting user identity: {e}")
+        return {}
+
 def log_activity(user, action: str) -> bool:
     """Log aktivitas user"""
     try:
         activities = load_activities()
         
+        # Get display name (nickname if available)
+        if hasattr(user, 'id'):
+            display_name = get_user_display_name(str(user.id), user.display_name if hasattr(user, 'display_name') else str(user))
+        else:
+            display_name = str(user)
+        
         new_activity = {
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user": str(user),
+            "user": display_name,
             "action": action
         }
         
@@ -232,7 +413,13 @@ def log_activity(user, action: str) -> bool:
         if len(activities) > 1000:
             activities = activities[-1000:]
         
-        return save_activities(activities)
+        result = save_activities(activities)
+        if result:
+            print(f"Activity logged: {new_activity['user']} - {new_activity['action']}")
+        else:
+            print(f"Failed to log activity: {new_activity['user']} - {new_activity['action']}")
+        
+        return result
         
     except Exception as e:
         print(f"Error logging activity: {e}")
@@ -357,9 +544,46 @@ def cleanup_invalid_data():
         
         save_activities(cleaned_activities)
         
+        # Cleanup identities
+        identities = load_identities()
+        cleaned_identities = {}
+        
+        for user_id, identity in identities.items():
+            if validate_identity_structure(identity):
+                cleaned_identities[user_id] = identity
+            else:
+                print(f"Removed invalid identity: {user_id}")
+        
+        save_identities(cleaned_identities)
+        
         print("Data cleanup completed.")
         return True
         
     except Exception as e:
         print(f"Error during cleanup: {e}")
+        return False
+
+# Fungsi untuk reset file activities jika rusak
+def reset_activities_file():
+    """Reset file activities.json jika rusak"""
+    try:
+        ensure_data_directory()
+        with open(ACTIVITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=4, ensure_ascii=False)
+        print("Activities file has been reset")
+        return True
+    except Exception as e:
+        print(f"Error resetting activities file: {e}")
+        return False
+
+def reset_identities_file():
+    """Reset file identities.json jika rusak"""
+    try:
+        ensure_data_directory()
+        with open(IDENTITIES_FILE, 'w', encoding='utf-8') as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        print("Identities file has been reset")
+        return True
+    except Exception as e:
+        print(f"Error resetting identities file: {e}")
         return False

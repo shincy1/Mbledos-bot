@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timedelta
-from utils.database import load_tasks, get_overdue_tasks, log_activity
+from utils.database import load_tasks, get_overdue_tasks, log_activity, get_user_display_name
 import discord
 
 class ReminderSystem:
@@ -88,27 +88,27 @@ async def check_deadlines(bot):
                     # 1. Reminder overdue (sudah lewat deadline)
                     if current_timestamp > deadline_timestamp:
                         if reminder_system.should_send_reminder(user_id, task_id, "overdue"):
-                            await send_overdue_reminder(user, task, task_id, deadline_dt)
+                            await send_overdue_reminder(user, task, task_id, deadline_dt, user_id)
                             reminder_sent = True
                             overdue_found += 1
                     
                     # 2. Reminder deadline dekat (24 jam sebelum deadline)
                     elif time_remaining <= 86400 and time_remaining > 0:  # 24 jam
                         if reminder_system.should_send_reminder(user_id, task_id, "24h"):
-                            await send_deadline_reminder(user, task, task_id, deadline_dt, "24 jam")
+                            await send_deadline_reminder(user, task, task_id, deadline_dt, "24 jam", user_id)
                             reminder_sent = True
                     
                     # 3. Reminder 80% waktu berlalu
                     elif elapsed_time >= 0.8 * total_duration:
                         if reminder_system.should_send_reminder(user_id, task_id, "80percent"):
                             progress_percentage = int((elapsed_time / total_duration) * 100)
-                            await send_progress_reminder(user, task, task_id, deadline_dt, progress_percentage)
+                            await send_progress_reminder(user, task, task_id, deadline_dt, progress_percentage, user_id)
                             reminder_sent = True
                     
                     # 4. Reminder 50% waktu berlalu (untuk task prioritas tinggi)
                     elif task.get("priority") == "high" and elapsed_time >= 0.5 * total_duration:
                         if reminder_system.should_send_reminder(user_id, task_id, "50percent_high"):
-                            await send_priority_reminder(user, task, task_id, deadline_dt)
+                            await send_priority_reminder(user, task, task_id, deadline_dt, user_id)
                             reminder_sent = True
                     
                     if reminder_sent:
@@ -128,15 +128,18 @@ async def check_deadlines(bot):
     except Exception as e:
         print(f"Error in check_deadlines: {e}")
 
-async def send_overdue_reminder(user, task, task_id, deadline_dt):
+async def send_overdue_reminder(user, task, task_id, deadline_dt, user_id):
     """Kirim reminder untuk task yang sudah overdue"""
     try:
         overdue_duration = datetime.now() - deadline_dt
         overdue_str = format_duration(overdue_duration)
         
+        # Get user display name
+        display_name = get_user_display_name(user_id, user.display_name)
+        
         embed = discord.Embed(
             title="🚨 TUGAS TERLAMBAT!",
-            description=f"Tugas Anda sudah melewati deadline!",
+            description=f"Halo **{display_name}**, tugas Anda sudah melewati deadline!",
             color=0xe74c3c
         )
         
@@ -162,12 +165,15 @@ async def send_overdue_reminder(user, task, task_id, deadline_dt):
     except Exception as e:
         print(f"Error sending overdue reminder to user {user.id}: {e}")
 
-async def send_deadline_reminder(user, task, task_id, deadline_dt, time_left):
+async def send_deadline_reminder(user, task, task_id, deadline_dt, time_left, user_id):
     """Kirim reminder untuk deadline yang dekat"""
     try:
+        # Get user display name
+        display_name = get_user_display_name(user_id, user.display_name)
+        
         embed = discord.Embed(
             title="⏰ DEADLINE MENDEKAT!",
-            description=f"Deadline tugas Anda tinggal {time_left} lagi!",
+            description=f"Halo **{display_name}**, deadline tugas Anda tinggal {time_left} lagi!",
             color=0xf39c12
         )
         
@@ -196,12 +202,15 @@ async def send_deadline_reminder(user, task, task_id, deadline_dt, time_left):
     except Exception as e:
         print(f"Error sending deadline reminder to user {user.id}: {e}")
 
-async def send_progress_reminder(user, task, task_id, deadline_dt, time_percentage):
+async def send_progress_reminder(user, task, task_id, deadline_dt, time_percentage, user_id):
     """Kirim reminder berdasarkan persentase waktu yang berlalu"""
     try:
+        # Get user display name
+        display_name = get_user_display_name(user_id, user.display_name)
+        
         embed = discord.Embed(
             title="📊 PENGINGAT PROGRESS",
-            description=f"Sudah {time_percentage}% waktu berlalu untuk tugas ini!",
+            description=f"Halo **{display_name}**, sudah {time_percentage}% waktu berlalu untuk tugas ini!",
             color=0x3498db
         )
         
@@ -230,12 +239,15 @@ async def send_progress_reminder(user, task, task_id, deadline_dt, time_percenta
     except Exception as e:
         print(f"Error sending progress reminder to user {user.id}: {e}")
 
-async def send_priority_reminder(user, task, task_id, deadline_dt):
+async def send_priority_reminder(user, task, task_id, deadline_dt, user_id):
     """Kirim reminder khusus untuk task prioritas tinggi"""
     try:
+        # Get user display name
+        display_name = get_user_display_name(user_id, user.display_name)
+        
         embed = discord.Embed(
             title="🔥 TUGAS PRIORITAS TINGGI",
-            description="Reminder untuk tugas dengan prioritas tinggi!",
+            description=f"Halo **{display_name}**, reminder untuk tugas dengan prioritas tinggi!",
             color=0xe74c3c
         )
         
@@ -299,7 +311,7 @@ async def send_daily_summary(bot, guild_id: int = None):
         if not overdue_tasks and not pending_tasks:
             return  # Tidak ada yang perlu dilaporkan
         
-        # Log summary activity
+        # Log summary activity dengan display names
         overdue_count = sum(len(user_tasks) for user_tasks in overdue_tasks.values())
         pending_count = sum(pending_tasks.values())
         
@@ -355,12 +367,12 @@ async def check_and_notify_managers(bot, guild_id: int = None):
                     color=0xe74c3c
                 )
                 
-                # Detail overdue tasks
+                # Detail overdue tasks dengan display names
                 overdue_details = ""
                 for user_id, user_tasks in overdue_tasks.items():
                     user = bot.get_user(int(user_id))
-                    user_name = user.display_name if user else f"User {user_id}"
-                    overdue_details += f"• **{user_name}**: {len(user_tasks)} tugas\n"
+                    display_name = get_user_display_name(user_id, user.display_name if user else f"User {user_id}")
+                    overdue_details += f"• **{display_name}**: {len(user_tasks)} tugas\n"
                 
                 if overdue_details:
                     embed.add_field(name="🚨 Tugas Terlambat", value=overdue_details, inline=False)
