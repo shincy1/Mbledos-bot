@@ -1,0 +1,55 @@
+# phpMyAdmin: 9300
+
+services:
+  bot:
+    build: ./
+    networks:
+      - python_app
+    depends_on:
+      db:
+        condition: service_healthy
+  db:
+    image: mysql:8.4.0
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "db",
+          "-u",
+          "root",
+          "-p${DB_PASSWORD}",
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 120
+    volumes:
+      - mysql-volume:/var/lib/mysql
+    environment:
+      MYSQL_USER: "python"
+      MYSQL_ROOT_HOST: "%"
+      MYSQL_ROOT_PASSWORD: "${DB_PASSWORD}"
+      MYSQL_DATABASE: "${DB_NAME}"
+    networks:
+      - python_app
+    env_file: ".env"
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "9300:80"
+    networks:
+      - python_app
+    env_file: ".env"
+networks:
+  python_app:
+volumes:
+  mysql-volume:

@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+print(os.getenv('DB_PORT', 3306))
+
 # Database configuration
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
