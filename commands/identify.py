@@ -2,7 +2,7 @@ import discord
 from discord import app_commands, Interaction, ButtonStyle
 from discord.ui import Button, View, Modal, TextInput, Select
 from discord.ext import commands
-from utils.database import load_identities, save_identities, log_activity
+from utils.database import load_identities, save_identities, log_activity, load_registered_roles
 import json
 import os
 
@@ -246,11 +246,8 @@ class IdentityListView(View):
 def get_identities_by_role(guild):
     """Get identities organized by role"""
     try:
-        # Load config to get registered roles
-        with open("config.json", "r") as f:
-            config = json.load(f)
-        
-        registered_roles = config.get("registered_roles", [])
+        # Load registered roles from database
+        registered_roles = load_registered_roles()
         identities = load_identities()
         
         identities_by_role = {}

@@ -1,7 +1,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-from utils.database import load_tasks
+from utils.database import load_tasks, init_database
 from utils.reminder import check_deadlines
 import os
 from datetime import datetime
@@ -11,9 +11,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot version - Semantic Versioning (MAJOR.MINOR.PATCH.BUILD)
-BOT_VERSION = "1.3.0.1"
+BOT_VERSION = "1.3.1.0"
 BOT_NAME = "Mbledos Task Manager"
-VERSION_CODENAME = "Identity Edition"
+VERSION_CODENAME = "MySQL Edition"
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -27,6 +27,12 @@ async def on_ready():
     print(f'📊 Bot: {bot.user}')
     print(f'🌐 Servers: {len(bot.guilds)}')
     print(f'👥 Users: {len(set(bot.get_all_members()))}')
+    
+    # Initialize database
+    if not init_database():
+        print("❌ Failed to initialize database. Bot may not function properly.")
+    else:
+        print("✅ Database initialized successfully")
     
     # Load commands setelah bot ready
     commands_loaded = 0
@@ -54,7 +60,7 @@ async def on_ready():
     # Set bot activity
     activity = discord.Activity(
         type=discord.ActivityType.watching,
-        name=f"tasks • v{BOT_VERSION}"
+        name=f"tasks • v{BOT_VERSION} • MySQL"
     )
     await bot.change_presence(activity=activity)
     
@@ -137,7 +143,7 @@ async def version_command(interaction: discord.Interaction):
     
     embed = discord.Embed(
         title=f"🤖 {BOT_NAME}",
-        description=f"**{VERSION_CODENAME}**\nAdvanced Discord Task Management System with Identity Support",
+        description=f"**{VERSION_CODENAME}**\nAdvanced Discord Task Management System with MySQL Database",
         color=0x3498db
     )
     
@@ -156,6 +162,7 @@ async def version_command(interaction: discord.Interaction):
         f"**Servers:** {len(bot.guilds)}\n"
         f"**Users:** {len(set(bot.get_all_members()))}\n"
         f"**Commands:** 8 slash commands\n"
+        f"**Database:** MySQL\n"
         f"**Uptime:** Since startup"
     )
     embed.add_field(name="🌐 System Stats", value=system_stats, inline=True)
@@ -165,20 +172,21 @@ async def version_command(interaction: discord.Interaction):
         f"**Release Date:** December 2024\n"
         f"**License:** MIT License\n"
         f"**Developer:** shincy1\n"
-        f"**Framework:** discord.py"
+        f"**Framework:** discord.py\n"
+        f"**Database:** MySQL 8.0+"
     )
     embed.add_field(name="ℹ️ Release Info", value=release_info, inline=True)
     
     embed.add_field(
-        name="🆕 Version 1.3.0 New Features",
+        name="🆕 Version 1.3.1 New Features",
         value=(
-            "• **Identity System**: Personal nickname management\n"
-            "• **Custom Display Names**: Personalized name display\n"
-            "• **Enhanced User Experience**: Better name recognition\n"
-            "• **Professional Appearance**: Consistent naming across system\n"
-            "• **Flexible Identity**: Different from Discord names\n"
-            "• **Privacy Control**: Users control their display names\n"
-            "• **System Integration**: Works across all commands"
+            "• **MySQL Database**: Robust database backend\n"
+            "• **Connection Pooling**: Optimized database performance\n"
+            "• **Data Integrity**: ACID compliance and constraints\n"
+            "• **Scalability**: Handle larger datasets efficiently\n"
+            "• **Backup & Recovery**: Built-in database reliability\n"
+            "• **Environment Variables**: Secure configuration\n"
+            "• **Performance Optimization**: Faster data operations"
         ),
         inline=False
     )
@@ -194,7 +202,7 @@ async def version_command(interaction: discord.Interaction):
             "`/rolelist` - View role details and members\n\n"
             "**User Commands:**\n"
             "`/myjob` - View personal tasks\n"
-            "`/identity` - Manage personal identity & nickname\n"
+            "`/identify` - Manage personal identity & nickname\n"
             "`/version` - View system information"
         ),
         inline=False
@@ -202,21 +210,42 @@ async def version_command(interaction: discord.Interaction):
     
     # Add what's new
     embed.add_field(
-        name="✨ What's New in v1.3.0.1",
+        name="✨ What's New in v1.3.1.0",
         value=(
-            "🔥 **NEW:** Personal identity management system\n"
-            "🔥 **NEW:** Custom nickname support\n"
-            "🔥 **NEW:** Enhanced user display across all features\n"
-            "⚡ **IMPROVED:** Better user recognition in reports\n"
-            "⚡ **IMPROVED:** Professional appearance in all commands\n"
-            "🐛 **FIXED:** Consistent naming throughout system\n"
-            "📊 **ENHANCED:** Identity-aware activity logging"
+            "🔥 **NEW:** MySQL database backend\n"
+            "🔥 **NEW:** Connection pooling for better performance\n"
+            "🔥 **NEW:** Environment-based configuration\n"
+            "⚡ **IMPROVED:** Data integrity with database constraints\n"
+            "⚡ **IMPROVED:** Faster query performance\n"
+            "⚡ **IMPROVED:** Better error handling and recovery\n"
+            "🐛 **FIXED:** Data consistency issues\n"
+            "📊 **ENHANCED:** Scalable architecture for growth"
         ),
         inline=False
     )
     
+    # Database status
+    try:
+        from utils.database import get_connection
+        conn = get_connection()
+        conn.close()
+        db_status = "🟢 Connected"
+    except:
+        db_status = "🔴 Disconnected"
+    
+    embed.add_field(
+        name="🗄️ Database Status",
+        value=(
+            f"**Status:** {db_status}\n"
+            f"**Type:** MySQL\n"
+            f"**Host:** {os.getenv('DB_HOST', 'localhost')}\n"
+            f"**Database:** {os.getenv('DB_NAME', 'mbledos_bot')}"
+        ),
+        inline=True
+    )
+    
     embed.set_footer(
-        text=f"Mbledos Task Manager v{BOT_VERSION} • Identity Edition • Developed by shincy1",
+        text=f"Mbledos Task Manager v{BOT_VERSION} • MySQL Edition • Developed by shincy1",
         icon_url=bot.user.display_avatar.url
     )
     
@@ -231,8 +260,20 @@ if __name__ == "__main__":
     print(f"   └ MINOR: {BOT_VERSION.split('.')[1]} (New features)")
     print(f"   └ PATCH: {BOT_VERSION.split('.')[2]} (Bug fixes & improvements)")
     print(f"   └ BUILD: {BOT_VERSION.split('.')[3]} (Release build)")
-    print(f"🆕 New in v1.3.0: Identity Management System")
-    print(f"   └ Users can now set custom nicknames")
-    print(f"   └ Enhanced display names across all features")
-    print(f"   └ Professional appearance in reports and notifications")
+    print(f"🆕 New in v1.3.1: MySQL Database Backend")
+    print(f"   └ Robust database with connection pooling")
+    print(f"   └ ACID compliance and data integrity")
+    print(f"   └ Environment-based secure configuration")
+    print(f"   └ Optimized performance for larger datasets")
+    
+    # Check environment variables
+    required_env = ['DISCORD_TOKEN', 'DB_USER']
+    missing_env = [var for var in required_env if not os.getenv(var)]
+    
+    if missing_env:
+        print(f"❌ Missing required environment variables: {', '.join(missing_env)}")
+        print("Please check your .env file and ensure all required variables are set.")
+        exit(1)
+    
+    print("✅ Environment variables loaded successfully")
     bot.run(os.getenv("DISCORD_TOKEN"))
