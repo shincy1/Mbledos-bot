@@ -1,8 +1,19 @@
+# Environment and config
 .env
 config.json
+
+# Node modules
 node_modules/
-*.log
+
+# Python cache and logs
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.log
+
+# Ignore backup or temp files
+*.backup
+
+# Ignore data folder contents
+/data/
